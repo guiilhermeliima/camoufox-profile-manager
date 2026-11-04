@@ -5,8 +5,9 @@
 # ARM64 / AMD64
 # ==========================================
 
+
 # ==========================================
-# Stage 1: Build Web UI
+# STAGE 1: BUILD WEB UI
 # ==========================================
 
 FROM node:20-slim AS webui
@@ -14,6 +15,7 @@ FROM node:20-slim AS webui
 WORKDIR /web
 
 COPY web/package.json web/package-lock.json ./
+
 RUN npm ci
 
 COPY web/ ./
@@ -24,14 +26,17 @@ RUN npm run build
 
 
 # ==========================================
-# Stage 2: Python application
+# STAGE 2: PYTHON APPLICATION
 # ==========================================
 
 FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System dependencies
+# ==========================================
+# SYSTEM DEPENDENCIES
+# ==========================================
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -71,45 +76,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -f /usr/include/zstd.h \
     && rm -rf /var/lib/apt/lists/*
 
+
 # ==========================================
-# Install uv
+# INSTALL UV
 # ==========================================
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
+
 # ==========================================
-# Install Python application
+# PYTHON APPLICATION
 # ==========================================
 
 COPY pyproject.toml uv.lock README.md ./
+
 COPY src ./src
 
 RUN uv sync --no-dev --frozen
 
+
 # ==========================================
-# Copy Web UI
+# COPY WEB UI
 # ==========================================
 
 COPY --from=webui /web/out ./src/camoufox_pm/webui
 
+
 # ==========================================
-# Runtime configuration
+# RUNTIME CONFIGURATION
 # ==========================================
 
 ENV CPM_HOST=0.0.0.0 \
     CPM_PORT=8000 \
     CPM_DB_PATH=/data/profiles.db \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    DISPLAY=:99
 
 VOLUME ["/data"]
 
 EXPOSE 8000
 
+
 # ==========================================
-# Startup script
+# STARTUP SCRIPT
 # ==========================================
 
 RUN printf '%s\n' \
@@ -117,13 +129,24 @@ RUN printf '%s\n' \
     'set -eu' \
     'cd /app' \
     'echo "[CPM] Verificando dependencias..."' \
-    'command -v Xvfb >/dev/null 2>&1 || { echo "[CPM] ERRO: Xvfb não encontrado"; exit 1; }' \
-    'command -v xvfb-run >/dev/null 2>&1 || { echo "[CPM] ERRO: xvfb-run não encontrado"; exit 1; }' \
-    'test -f /data/.write-test || touch /data/.write-test' \
-    'rm -f /data/.write-test' \
+    'command -v Xvfb >/dev/null 2>&1 || { echo "[CPM] ERRO: Xvfb nao encontrado"; exit 1; }' \
+    'command -v uv >/dev/null 2>&1 || { echo "[CPM] ERRO: uv nao encontrado"; exit 1; }' \
+    'mkdir -p /data' \
+    'test -w /data || { echo "[CPM] ERRO: /data sem permissao de escrita"; exit 1; }' \
+    'echo "[CPM] Iniciando servidor grafico virtual..."' \
+    'Xvfb :99 -screen 0 1920x1080x24 -ac +extension RANDR -nolisten tcp &' \
+    'XVFB_PID=$!' \
+    'sleep 1' \
+    'if ! kill -0 "$XVFB_PID" 2>/dev/null; then echo "[CPM] ERRO: Xvfb nao iniciou"; exit 1; fi' \
+    'echo "[CPM] Xvfb iniciado com DISPLAY=$DISPLAY"' \
     'echo "[CPM] Iniciando Camoufox Profile Manager..."' \
-    'exec xvfb-run -a -s "-screen 0 1920x1080x24 -ac +extension RANDR" uv run --no-sync camoufox-pm --host "${CPM_HOST}" --port "${CPM_PORT}" --no-browser' \
+    'exec uv run --no-sync camoufox-pm --host "${CPM_HOST}" --port "${CPM_PORT}" --no-browser' \
     > /usr/local/bin/start-cpm.sh \
     && chmod +x /usr/local/bin/start-cpm.sh
+
+
+# ==========================================
+# CONTAINER ENTRYPOINT
+# ==========================================
 
 ENTRYPOINT ["/usr/local/bin/start-cpm.sh"]
