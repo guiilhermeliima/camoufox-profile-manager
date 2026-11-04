@@ -5,7 +5,10 @@
 # ARM64 / AMD64
 # ==========================================
 
+# ==========================================
 # Stage 1: Build Web UI
+# ==========================================
+
 FROM node:20-slim AS webui
 
 WORKDIR /web
@@ -26,13 +29,9 @@ RUN npm run build
 
 FROM python:3.12-slim
 
-# System dependencies:
-# - Build tools for Python packages
-# - Zstandard development headers
-# - GTK and X11 libraries
-# - Virtual display (Xvfb)
-# - Font and rendering dependencies
+ENV DEBIAN_FRONTEND=noninteractive
 
+# System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -72,18 +71,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -f /usr/include/zstd.h \
     && rm -rf /var/lib/apt/lists/*
 
-
 # ==========================================
-# Install uv package manager
+# Install uv
 # ==========================================
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-
 # ==========================================
-# Python application
+# Install Python application
 # ==========================================
 
 COPY pyproject.toml uv.lock README.md ./
@@ -91,29 +88,42 @@ COPY src ./src
 
 RUN uv sync --no-dev --frozen
 
-
 # ==========================================
 # Copy Web UI
 # ==========================================
 
 COPY --from=webui /web/out ./src/camoufox_pm/webui
 
-
 # ==========================================
-# Application configuration
+# Runtime configuration
 # ==========================================
 
 ENV CPM_HOST=0.0.0.0 \
     CPM_PORT=8000 \
-    CPM_DB_PATH=/data/profiles.db
+    CPM_DB_PATH=/data/profiles.db \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 VOLUME ["/data"]
 
 EXPOSE 8000
 
-
 # ==========================================
-# Start application with virtual display
+# Startup script
 # ==========================================
 
-CMD ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24 -ac +extension RANDR", "uv", "run", "camoufox-pm", "--host", "0.0.0.0", "--port", "8000", "--no-browser"]
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'set -eu' \
+    'cd /app' \
+    'echo "[CPM] Verificando dependencias..."' \
+    'command -v Xvfb >/dev/null 2>&1 || { echo "[CPM] ERRO: Xvfb não encontrado"; exit 1; }' \
+    'command -v xvfb-run >/dev/null 2>&1 || { echo "[CPM] ERRO: xvfb-run não encontrado"; exit 1; }' \
+    'test -f /data/.write-test || touch /data/.write-test' \
+    'rm -f /data/.write-test' \
+    'echo "[CPM] Iniciando Camoufox Profile Manager..."' \
+    'exec xvfb-run -a -s "-screen 0 1920x1080x24 -ac +extension RANDR" uv run --no-sync camoufox-pm --host "${CPM_HOST}" --port "${CPM_PORT}" --no-browser' \
+    > /usr/local/bin/start-cpm.sh \
+    && chmod +x /usr/local/bin/start-cpm.sh
+
+ENTRYPOINT ["/usr/local/bin/start-cpm.sh"]
