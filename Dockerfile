@@ -29,7 +29,8 @@ FROM python:3.12-slim
 # System dependencies:
 # - Build tools for Python packages
 # - Zstandard development headers
-# - GTK and X11 libraries for Camoufox
+# - GTK and X11 libraries
+# - Virtual display (Xvfb)
 # - Font and rendering dependencies
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -63,6 +64,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwayland-egl1 \
     libegl1 \
     libgl1 \
+    xvfb \
+    xauth \
     curl \
     ca-certificates \
     fonts-liberation \
@@ -70,22 +73,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 
-# Install uv package manager.
+# ==========================================
+# Install uv package manager
+# ==========================================
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
 
-# Copy Python project files.
+# ==========================================
+# Python application
+# ==========================================
+
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-
-# Install Python dependencies.
 RUN uv sync --no-dev --frozen
 
 
-# Copy built Web UI.
+# ==========================================
+# Copy Web UI
+# ==========================================
+
 COPY --from=webui /web/out ./src/camoufox_pm/webui
 
 
@@ -97,14 +107,13 @@ ENV CPM_HOST=0.0.0.0 \
     CPM_PORT=8000 \
     CPM_DB_PATH=/data/profiles.db
 
-# Persistent profile and database storage.
 VOLUME ["/data"]
 
 EXPOSE 8000
 
 
 # ==========================================
-# Start application
+# Start application with virtual display
 # ==========================================
 
-CMD ["uv", "run", "camoufox-pm", "--host", "0.0.0.0", "--port", "8000", "--no-browser"]
+CMD ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24 -ac +extension RANDR", "uv", "run", "camoufox-pm", "--host", "0.0.0.0", "--port", "8000", "--no-browser"]
